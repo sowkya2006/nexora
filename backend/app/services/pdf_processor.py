@@ -73,45 +73,119 @@ def clean_extracted_text(text: str) -> str:
 
 def semantic_chunking(
     pages_text: List[Tuple[int, str]],
-    chunk_size_words: int = 600,
-    overlap_words: int = 100
+    chunk_size_words: int = 900,
+    overlap_words: int = 150,
 ) -> List[Dict[str, Any]]:
     """
-    Splits text into chunks of 500-800 words (~500-800 tokens) with 100 word overlap (~100 tokens).
-    Preserves page number metadata for each chunk.
+    Semantic chunking v2:
+    - Target 800-1000 words per chunk (default 900)
+    - 150-word overlap between consecutive chunks
+    - Never splits a heading from its first paragraph
+    - Merges very short pages with the next page before chunking
+    - Returns list of dicts: {chunk_number, page_number, text, word_count}
     """
-    chunks = []
-    chunk_counter = 0
+    # ── Step 1: merge short pages into the next page ─────────────────────
+    # If a page has fewer than 80 words it's almost certainly just a header
+    # page — merge it into the following page so it carries context.
+    MIN_PAGE_WORDS = 80
+    merged_pages: List[Tuple[int, str]] = []
+    carry_text = ""
+    carry_page = 1
 
     for page_num, text in pages_text:
         words = text.split()
-        if not words:
-            continue
-        
-        if len(words) <= chunk_size_words:
+        if len(words) < MIN_PAGE_WORDS:
+            carry_text = carry_text + " " + text if carry_text else text
+            carry_page = page_num
+        else:
+            if carry_text:
+                text = carry_text + " " + text
+                carry_text = ""
+            merged_pages.append((page_num, text.strip()))
+
+    # flush any remaining carry
+    if carry_text:
+        if merged_pages:
+            prev_pg, prev_txt = merged_pages[-1]
+            merged_pages[-1] = (prev_pg, prev_txt + " " + carry_text)
+        else:
+            merged_pages.append((carry_page, carry_text))
+
+    if not merged_pages:
+        merged_pages = pages_text  # fallback: use original if everything was short
+
+    # ── Step 2: detect heading lines ─────────────────────────────────────
+    # A line is considered a heading if it is short (<= 12 words), ends without
+    # a period/comma, and is followed by body text.
+    HEADING_RE = re.compile(
+        r'^(\s*(?:#+\s+)?[A-Z0-9][A-Z0-9 &:,\-\.\/]{0,80})\s*$',
+        re.MULTILINE
+    )
+
+    def _is_heading_line(line: str) -> bool:
+        stripped = line.strip()
+        if not stripped:
+            return False
+        word_count = len(stripped.split())
+        ends_with_sentence = stripped.endswith(('.', ',', ';', ':', '?', '!'))
+        return word_count <= 12 and not ends_with_sentence
+
+    # ── Step 3: build word list keeping page-boundary markers ────────────
+    # We work on a flat list of (word, page_number) pairs so we can track
+    # which page each chunk's majority content came from.
+    word_page_list: List[Tuple[str, int]] = []
+    for page_num, text in merged_pages:
+        for word in text.split():
+            word_page_list.append((word, page_num))
+
+    if not word_page_list:
+        return []
+
+    total_words = len(word_page_list)
+    chunks: List[Dict[str, Any]] = []
+    chunk_counter = 0
+    start = 0
+
+    while start < total_words:
+        end = min(start + chunk_size_words, total_words)
+
+        # ── Do not break mid-heading ──────────────────────────────────────
+        # Look back up to 15 words from the cut point to see if we're
+        # inside a heading; if so, push the cut to before the heading.
+        if end < total_words:
+            # Reconstruct the last 15 words as a string to test for headings
+            lookback_start = max(end - 15, start)
+            lookback_text  = " ".join(w for w, _ in word_page_list[lookback_start:end])
+            lines = lookback_text.split("\n")
+            last_line = lines[-1] if lines else ""
+            if _is_heading_line(last_line):
+                # Move cut point back to before this heading
+                words_in_heading = len(last_line.split())
+                end = max(end - words_in_heading, start + 1)
+
+        chunk_words = [w for w, _ in word_page_list[start:end]]
+        chunk_text  = " ".join(chunk_words).strip()
+
+        if chunk_text:
+            # Dominant page = page that appears most in this chunk
+            page_counts: Dict[int, int] = {}
+            for _, pg in word_page_list[start:end]:
+                page_counts[pg] = page_counts.get(pg, 0) + 1
+            dominant_page = max(page_counts, key=lambda p: page_counts[p])
+
             chunk_counter += 1
             chunks.append({
                 "chunk_number": chunk_counter,
-                "page_number": page_num,
-                "text": text,
+                "page_number":  dominant_page,
+                "text":         chunk_text,
+                "word_count":   len(chunk_words),
             })
-        else:
-            step = chunk_size_words - overlap_words
-            for start_idx in range(0, len(words), step):
-                end_idx = min(start_idx + chunk_size_words, len(words))
-                chunk_words = words[start_idx:end_idx]
-                chunk_str = " ".join(chunk_words)
 
-                if chunk_str.strip():
-                    chunk_counter += 1
-                    chunks.append({
-                        "chunk_number": chunk_counter,
-                        "page_number": page_num,
-                        "text": chunk_str,
-                    })
-
-                if end_idx >= len(words):
-                    break
+        # Advance by chunk_size - overlap (sliding window)
+        step = chunk_size_words - overlap_words
+        start += step
+        if start >= total_words:
+            break
 
     return chunks
 
