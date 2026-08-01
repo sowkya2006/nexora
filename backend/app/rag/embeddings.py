@@ -11,7 +11,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # HuggingFace Inference API endpoint for BAAI/bge-large-en-v1.5
-HF_API_URL = "https://api-inference.huggingface.co/models/BAAI/bge-large-en-v1.5"
+HF_API_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/BAAI/bge-large-en-v1.5"
 EMBEDDING_DIM = 1024
 
 
@@ -21,7 +21,10 @@ def _call_hf_api(texts: List[str]) -> List[List[float]]:
     if settings.hf_api_token:
         headers["Authorization"] = f"Bearer {settings.hf_api_token}"
 
-    payload = {"inputs": texts, "options": {"wait_for_model": True}}
+    payload = {
+        "inputs": texts,
+        "options": {"wait_for_model": True, "use_cache": True}
+    }
 
     with httpx.Client(timeout=60.0) as client:
         response = client.post(HF_API_URL, json=payload, headers=headers)
