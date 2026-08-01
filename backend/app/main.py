@@ -43,8 +43,8 @@ async def health_check():
         "supabase_configured": is_configured,
         "pinecone_configured": settings.pinecone_api_key != "your-pinecone-api-key",
         "groq_configured": settings.groq_api_key != "your-groq-api-key",
-        "pinecone_index": settings.pinecone_index_name,
-        "pinecone_host_set": bool(settings.pinecone_host),
-        "pinecone_host_prefix": settings.pinecone_host[:40] if settings.pinecone_host else "NOT SET",
+        "pinecone_index": settings.pinecone_index_name.strip(),
+        "pinecone_host_set": bool(settings.pinecone_host.strip()),
+        "pinecone_host_prefix": settings.pinecone_host.strip()[:40] if settings.pinecone_host.strip() else "NOT SET",
     }
 

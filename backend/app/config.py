@@ -46,5 +46,13 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
+    @property
+    def clean_pinecone_index(self) -> str:
+        return self.pinecone_index_name.strip()
+
+    @property
+    def clean_pinecone_host(self) -> str:
+        return self.pinecone_host.strip()
+
 
 settings = Settings()

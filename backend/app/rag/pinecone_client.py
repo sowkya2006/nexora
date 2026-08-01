@@ -10,18 +10,20 @@ def get_pinecone_client() -> Pinecone:
     """Returns a cached Pinecone client instance."""
     global _pc
     if _pc is None:
-        _pc = Pinecone(api_key=settings.pinecone_api_key)
+        _pc = Pinecone(api_key=settings.pinecone_api_key.strip())
     return _pc
 
 
 def get_pinecone_index():
     """
     Returns the configured Pinecone index.
-    Uses pinecone_host if set (required for serverless indexes),
-    otherwise uses the index name directly (for pod-based indexes).
+    Strips all whitespace from host and index name to handle
+    accidental tabs or spaces from environment variable editors.
     """
     client = get_pinecone_client()
-    host = getattr(settings, "pinecone_host", None)
-    if host and host.strip():
+    host = settings.pinecone_host.strip()
+    index_name = settings.pinecone_index_name.strip()
+
+    if host:
         return client.Index(host=host)
-    return client.Index(settings.pinecone_index_name)
+    return client.Index(index_name)
