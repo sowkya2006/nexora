@@ -157,23 +157,26 @@ async def trigger_reingest(
     return {"status": "batch_complete", "total_vectors": total, "results": results}
 
 
-@router.post("/admin/reingest-batch")
-async def trigger_reingest_batch(
+@router.post("/admin/reingest-from-storage")
+async def reingest_from_storage(
     start: int = 0,
     end: int = 5,
     clear: bool = False,
     _admin: AdminUser = Depends(get_current_admin),
 ):
     """
-    Re-ingest a batch of PDFs (start to end index from KB_FILES list).
-    Call multiple times: start=0&end=5, start=5&end=10, start=10&end=14
+    Re-ingest PDFs from Supabase Storage URLs using HF API embeddings.
+    Fetches PDF bytes via HTTP from Supabase public URLs.
+    Call in batches: start=0&end=5, start=5&end=10, start=10&end=14
+    Set clear=true on first call only.
     """
-    from pathlib import Path
+    import httpx as hx
     from app.rag.pinecone_client import get_pinecone_index
     from app.rag.embeddings import generate_chunk_embeddings
     from app.services.pdf_processor import extract_text_by_page, semantic_chunking
+    from app.config import settings
 
-    kb_dir = Path(__file__).parent.parent.parent.parent / "knowledge_base"
+    SUPABASE_URL = settings.supabase_url
     pinecone_idx = get_pinecone_index()
 
     if clear:
@@ -187,32 +190,56 @@ async def trigger_reingest_batch(
     results = []
 
     for filename, title, category in batch:
-        pdf_path = kb_dir / filename
-        if not pdf_path.exists():
-            results.append({"file": filename, "status": "not_found"})
-            continue
+        storage_url = f"{SUPABASE_URL}/storage/v1/object/public/documents/pdfs/{filename}"
         try:
-            file_bytes = pdf_path.read_bytes()
+            # Download PDF from Supabase Storage
+            resp = hx.get(storage_url, timeout=30)
+            if resp.status_code != 200:
+                results.append({"file": filename, "status": f"download_failed_{resp.status_code}"})
+                continue
+
+            file_bytes = resp.content
             pages = extract_text_by_page(file_bytes)
             chunk_dicts = semantic_chunking(pages)
             chunks = [c["text"] for c in chunk_dicts]
             chunk_pages = [c["page_number"] for c in chunk_dicts]
+
             if not chunks:
+                results.append({"file": filename, "status": "no_chunks"})
                 continue
+
+            # Generate embeddings using HF API (same as query time)
             embeddings = generate_chunk_embeddings(chunks)
             doc_id = str(uuid.uuid4())
+
             vectors = [{"id": f"{doc_id}_chunk_{i}", "values": emb, "metadata": {
-                "document_id": doc_id, "document_name": title, "category": category,
-                "file_name": filename, "page": chunk_pages[i], "text": chunk[:500], "chunk_index": i,
+                "document_id": doc_id,
+                "document_name": title,
+                "category": category,
+                "file_name": filename,
+                "file_url": storage_url,
+                "page": chunk_pages[i],
+                "text": chunk[:500],
+                "chunk_index": i,
             }} for i, (chunk, emb) in enumerate(zip(chunks, embeddings))]
+
             for i in range(0, len(vectors), 50):
                 pinecone_idx.upsert(vectors=vectors[i:i+50])
+
             total += len(chunks)
             results.append({"file": filename, "chunks": len(chunks), "status": "ok"})
-        except Exception as e:
-            results.append({"file": filename, "status": "error", "error": str(e)[:100]})
+            logger.info(f"Re-indexed from storage: {filename} -> {len(chunks)} chunks")
 
-    return {"status": "batch_complete", "batch": f"{start}-{end}", "total_vectors": total, "results": results}
+        except Exception as e:
+            logger.error(f"Error: {filename}: {e}")
+            results.append({"file": filename, "status": "error", "error": str(e)[:150]})
+
+    return {
+        "status": "batch_complete",
+        "batch": f"{start}-{end}",
+        "total_vectors_this_batch": total,
+        "results": results
+    }
 
 
 @router.get("/admin/pinecone-stats")
