@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     groq_api_key: str = "your-groq-api-key"
     groq_model: str = "llama-3.3-70b-versatile"
 
-    # --- Embeddings (BAAI/bge-large-en-v1.5) ---
+    # --- Embeddings (HuggingFace Inference API — BAAI/bge-large-en-v1.5) ---
+    hf_api_token: str = ""  # Get free token from https://huggingface.co/settings/tokens
     embedding_model: str = "BAAI/bge-large-en-v1.5"
     embedding_dimension: int = 1024
 
