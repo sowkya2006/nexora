@@ -229,3 +229,32 @@ async def pinecone_stats(_admin: AdminUser = Depends(get_current_admin)):
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@router.post("/admin/test-query")
+async def test_query(
+    q: str = "What are the hostel facilities?",
+    _admin: AdminUser = Depends(get_current_admin),
+):
+    """Test Pinecone query with raw scores — debug endpoint."""
+    from app.rag.pinecone_client import get_pinecone_index
+    from app.rag.embeddings import generate_chunk_embeddings
+    try:
+        vec = generate_chunk_embeddings([q])[0]
+        idx = get_pinecone_index()
+        results = idx.query(vector=vec, top_k=5, include_metadata=True)
+        matches = []
+        for m in results.matches:
+            matches.append({
+                "score": round(m.score, 4),
+                "doc": m.metadata.get("document_name", "?") if m.metadata else "?",
+                "page": m.metadata.get("page", "?") if m.metadata else "?",
+                "text_preview": (m.metadata.get("text", "")[:80] if m.metadata else ""),
+            })
+        return {
+            "query": q,
+            "embedding_dim": len(vec),
+            "top_matches": matches,
+        }
+    except Exception as e:
+        return {"error": str(e)}
