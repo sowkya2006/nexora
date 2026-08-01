@@ -1,0 +1,2 @@
+-- Database schema will be added in the next phase (awaiting approval).
+-- See backend/supabase/schema.sql for the planned Supabase PostgreSQL schema.

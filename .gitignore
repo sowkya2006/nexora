@@ -1,0 +1,79 @@
+# ── Python ──────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.eggs/
+*.egg
+*.pytest_cache/
+
+# ── Virtual environments ─────────────────────────────────────
+backend/venv/
+venv/
+.venv/
+env/
+
+# ── Environment / Secrets ────────────────────────────────────
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+*.env
+
+# ── Node / Frontend ──────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+frontend/build/
+.npm/
+
+# ── Build artifacts ──────────────────────────────────────────
+dist/
+build/
+*.tsbuildinfo
+
+# ── Model cache (large files) ────────────────────────────────
+.cache/
+models/
+backend/.cache/
+backend/models/
+
+# ── IDE ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*.suo
+*.user
+
+# ── OS ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ─────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pip-log.txt
+
+# ── Test / Coverage ──────────────────────────────────────────
+coverage/
+.coverage
+htmlcov/
+.nyc_output/
+
+# ── Misc backend scripts (dev/debug only) ────────────────────
+backend/check_imports.py
+backend/check_packages.py
+backend/check_cache_and_network.py
+backend/check_download_progress.py
+backend/debug_embeddings.py
+backend/download_embedding_model.py
+backend/fast_download_bge.py
