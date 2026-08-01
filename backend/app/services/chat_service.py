@@ -193,8 +193,9 @@ def _retrieve_and_rerank_chunks(
     # Sort chunks by boosted score descending
     extracted_chunks.sort(key=lambda c: c["score"], reverse=True)
     
-    # Filter out low similarity chunks — lowered to 0.1 to handle cross-model embedding differences
-    filtered_chunks = [c for c in extracted_chunks if c["raw_score"] >= 0.1]
+    # Filter out low similarity chunks — set to 0.01 to accept all results
+    # Scores are low due to HF API embedding normalization differences
+    filtered_chunks = [c for c in extracted_chunks if c["raw_score"] >= 0.01]
     if not filtered_chunks:
         return []
 
