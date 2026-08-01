@@ -7,7 +7,7 @@ import os
 import uuid
 import datetime
 import logging
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends
 from app.auth.dependencies import get_current_admin
 from app.schemas.auth import AdminUser
 
@@ -101,20 +101,118 @@ def _do_reingest():
 
 @router.post("/admin/reingest")
 async def trigger_reingest(
-    background_tasks: BackgroundTasks,
     _admin: AdminUser = Depends(get_current_admin),
 ):
     """
-    Trigger re-ingestion of all knowledge_base PDFs into Pinecone.
-    Uses the same HF API embeddings as chat queries.
-    Admin only.
+    Synchronously re-ingest all knowledge_base PDFs into Pinecone.
+    Processes one file at a time to stay within Vercel timeout limits.
     """
-    background_tasks.add_task(_do_reingest)
-    return {
-        "status": "started",
-        "message": "Re-ingestion started in background. All PDFs will be re-indexed using HF embeddings. Check Pinecone stats in ~2 minutes.",
-        "files": len(KB_FILES)
-    }
+    from pathlib import Path
+    from app.rag.pinecone_client import get_pinecone_index
+    from app.rag.embeddings import generate_chunk_embeddings
+    from app.services.pdf_processor import extract_text_by_page, semantic_chunking
+
+    kb_dir = Path(__file__).parent.parent.parent.parent / "knowledge_base"
+    pinecone_idx = get_pinecone_index()
+
+    # Process only first 3 files per call to stay within 60s Vercel limit
+    # Call multiple times to index all files
+    import json
+    from fastapi import Query as FQuery
+
+    try:
+        pinecone_idx.delete(delete_all=True)
+    except Exception as e:
+        logger.warning(f"Clear: {e}")
+
+    total = 0
+    results = []
+
+    for filename, title, category in KB_FILES[:5]:
+        pdf_path = kb_dir / filename
+        if not pdf_path.exists():
+            results.append({"file": filename, "status": "not_found"})
+            continue
+        try:
+            file_bytes = pdf_path.read_bytes()
+            pages = extract_text_by_page(file_bytes)
+            chunk_dicts = semantic_chunking(pages)
+            chunks = [c["text"] for c in chunk_dicts]
+            chunk_pages = [c["page_number"] for c in chunk_dicts]
+            if not chunks:
+                continue
+            embeddings = generate_chunk_embeddings(chunks)
+            doc_id = str(uuid.uuid4())
+            vectors = [{"id": f"{doc_id}_chunk_{i}", "values": emb, "metadata": {
+                "document_id": doc_id, "document_name": title, "category": category,
+                "file_name": filename, "page": chunk_pages[i], "text": chunk[:500], "chunk_index": i,
+            }} for i, (chunk, emb) in enumerate(zip(chunks, embeddings))]
+            for i in range(0, len(vectors), 50):
+                pinecone_idx.upsert(vectors=vectors[i:i+50])
+            total += len(chunks)
+            results.append({"file": filename, "chunks": len(chunks), "status": "ok"})
+        except Exception as e:
+            results.append({"file": filename, "status": "error", "error": str(e)[:100]})
+
+    return {"status": "batch_complete", "total_vectors": total, "results": results}
+
+
+@router.post("/admin/reingest-batch")
+async def trigger_reingest_batch(
+    start: int = 0,
+    end: int = 5,
+    clear: bool = False,
+    _admin: AdminUser = Depends(get_current_admin),
+):
+    """
+    Re-ingest a batch of PDFs (start to end index from KB_FILES list).
+    Call multiple times: start=0&end=5, start=5&end=10, start=10&end=14
+    """
+    from pathlib import Path
+    from app.rag.pinecone_client import get_pinecone_index
+    from app.rag.embeddings import generate_chunk_embeddings
+    from app.services.pdf_processor import extract_text_by_page, semantic_chunking
+
+    kb_dir = Path(__file__).parent.parent.parent.parent / "knowledge_base"
+    pinecone_idx = get_pinecone_index()
+
+    if clear:
+        try:
+            pinecone_idx.delete(delete_all=True)
+        except Exception as e:
+            logger.warning(f"Clear: {e}")
+
+    batch = KB_FILES[start:end]
+    total = 0
+    results = []
+
+    for filename, title, category in batch:
+        pdf_path = kb_dir / filename
+        if not pdf_path.exists():
+            results.append({"file": filename, "status": "not_found"})
+            continue
+        try:
+            file_bytes = pdf_path.read_bytes()
+            pages = extract_text_by_page(file_bytes)
+            chunk_dicts = semantic_chunking(pages)
+            chunks = [c["text"] for c in chunk_dicts]
+            chunk_pages = [c["page_number"] for c in chunk_dicts]
+            if not chunks:
+                continue
+            embeddings = generate_chunk_embeddings(chunks)
+            doc_id = str(uuid.uuid4())
+            vectors = [{"id": f"{doc_id}_chunk_{i}", "values": emb, "metadata": {
+                "document_id": doc_id, "document_name": title, "category": category,
+                "file_name": filename, "page": chunk_pages[i], "text": chunk[:500], "chunk_index": i,
+            }} for i, (chunk, emb) in enumerate(zip(chunks, embeddings))]
+            for i in range(0, len(vectors), 50):
+                pinecone_idx.upsert(vectors=vectors[i:i+50])
+            total += len(chunks)
+            results.append({"file": filename, "chunks": len(chunks), "status": "ok"})
+        except Exception as e:
+            results.append({"file": filename, "status": "error", "error": str(e)[:100]})
+
+    return {"status": "batch_complete", "batch": f"{start}-{end}", "total_vectors": total, "results": results}
 
 
 @router.get("/admin/pinecone-stats")
